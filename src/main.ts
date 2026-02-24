@@ -11,6 +11,7 @@ type CatItem = {
   imageUrl: string;
 };
 
+const deckSectionEl = document.querySelector("section.deck") as HTMLElement;
 const deckEl = document.getElementById("deck") as HTMLDivElement;
 const counterEl = document.getElementById("counter") as HTMLDivElement;
 const loadingEl = document.getElementById("loading") as HTMLDivElement;
@@ -32,12 +33,6 @@ let liked: CatItem[] = [];
 function setCounter() {
   counterEl.textContent = `${Math.min(currentIndex + 1, cats.length)} / ${cats.length}`;
   if (cats.length === 0) counterEl.textContent = `0 / 0`;
-}
-
-function cataasImageUrl(id: string) {
-  // width/height helps with consistent mobile layout.
-  // You can change to ?width=... only if you prefer natural height.
-  return `https://cataas.com/cat/${encodeURIComponent(id)}?width=800&height=1100`;
 }
 
 async function fetchCats(limit = 15, tags: string[] = []) {
@@ -79,13 +74,10 @@ function hideError() {
 }
 
 function showSummary() {
-  // hide deck area controls and buttons
-  const actionsEl = (deckEl.parentElement as HTMLElement).querySelector(".actions") as HTMLElement | null;
-  if (actionsEl) actionsEl.hidden = true;
-  
-  hintEl.hidden = true;
-  deckEl.parentElement!.hidden = true; // hide entire deck section
+  // Hide the entire deck section (cards + buttons + hint)
+  deckSectionEl.hidden = true;
 
+  // Show summary only
   summaryEl.hidden = false;
 
   summaryTextEl.textContent = `You liked ${liked.length} out of ${cats.length} cats.`;
@@ -105,9 +97,18 @@ function showSummary() {
 }
 
 function resetUIForDeck() {
-  summaryEl.setAttribute("hidden", "true");
-  (deckEl.parentElement as HTMLElement).querySelector(".actions")?.removeAttribute("hidden");
-  hintEl.removeAttribute("hidden");
+  // Show deck section again
+  deckSectionEl.hidden = false;
+
+  // Hide summary
+  summaryEl.hidden = true;
+
+  // Ensure normal UI parts show again
+  errorEl.hidden = true;
+  hintEl.hidden = false;
+
+  const actionsEl = deckSectionEl.querySelector(".actions") as HTMLElement | null;
+  if (actionsEl) actionsEl.hidden = false;
 }
 
 function createCard(cat: CatItem, positionFromTop: number) {
@@ -175,6 +176,7 @@ function goNext() {
   currentIndex++;
   if (currentIndex >= cats.length) {
     setCounter();
+    counterEl.textContent = `${cats.length} / ${cats.length}`;
     showSummary();
     return;
   }
@@ -270,7 +272,7 @@ function bindButtons() {
   btnLike.addEventListener("click", () => {
     const cat = getTopCat();
     if (!cat) return;
-    const topCard = deckEl.querySelector(".card:last-child") as HTMLElement | null;
+    const topCard = deckEl.querySelector(".card") as HTMLElement | null;
     if (topCard) animateAndVote(topCard, cat, true);
     else vote(cat, true);
   });
@@ -278,7 +280,7 @@ function bindButtons() {
   btnDislike.addEventListener("click", () => {
     const cat = getTopCat();
     if (!cat) return;
-    const topCard = deckEl.querySelector(".card:last-child") as HTMLElement | null;
+    const topCard = deckEl.querySelector(".card") as HTMLElement | null;
     if (topCard) animateAndVote(topCard, cat, false);
     else vote(cat, false);
   });
