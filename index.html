@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Cat Swipe Picker</title>
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">C</div>
+        <div>
+          <div class="title">Cat Picker</div>
+          <div class="subtitle">Swipe right to like, left to dislike</div>
+        </div>
+      </div>
+
+      <div class="counter" id="counter">0 / 0</div>
+    </header>
+
+    <main class="main">
+      <section class="deck" aria-label="Cat card deck">
+        <div class="deck__stack" id="deck"></div>
+
+        <div class="actions" aria-label="Buttons (fallback)">
+          <button class="btn btn--ghost" id="btnDislike" type="button">
+            Dislike
+          </button>
+          <button class="btn btn--primary" id="btnLike" type="button">
+            Like
+          </button>
+        </div>
+
+        <div class="hint" id="hint">
+          Tip: swipe on the cat card (or use the buttons).
+        </div>
+
+        <div class="loading" id="loading">Loading cats…</div>
+        <div class="error" id="error" hidden></div>
+      </section>
+
+      <section class="summary" id="summary" hidden>
+        <h2>Summary</h2>
+        <p id="summaryText"></p>
+
+        <div class="likedGrid" id="likedGrid"></div>
+
+        <button class="btn btn--ghost" id="btnRestart" type="button">
+          Restart
+        </button>
+      </section>
+    </main>
+
+    <footer class="footer">
+      Images from <span class="mono">cataas.com</span>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>
