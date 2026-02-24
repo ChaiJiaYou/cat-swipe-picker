@@ -79,11 +79,14 @@ function hideError() {
 }
 
 function showSummary() {
-  // hide deck area controls
-  (deckEl.parentElement as HTMLElement).querySelector(".actions")?.setAttribute("hidden", "true");
-  hintEl.setAttribute("hidden", "true");
+  // hide deck area controls and buttons
+  const actionsEl = (deckEl.parentElement as HTMLElement).querySelector(".actions") as HTMLElement | null;
+  if (actionsEl) actionsEl.hidden = true;
+  
+  hintEl.hidden = true;
+  deckEl.parentElement!.hidden = true; // hide entire deck section
 
-  summaryEl.removeAttribute("hidden");
+  summaryEl.hidden = false;
 
   summaryTextEl.textContent = `You liked ${liked.length} out of ${cats.length} cats.`;
 
@@ -110,11 +113,35 @@ function resetUIForDeck() {
 function createCard(cat: CatItem, positionFromTop: number) {
   const card = document.createElement("div");
   card.className = "card";
-  // Slight stacked transform for the cards behind
-  const scale = 0.90 + (positionFromTop * 0.05); // 0.90, 0.95, 1.00 for 3 cards
-  const translateY = -70 + (positionFromTop * 35);
+  
+  // Calculate how many cards remain
+  const remaining = cats.slice(currentIndex);
+  const totalCards = remaining.length;
+  
+  let scale: number;
+  let translateY: number;
+  
+  if (totalCards === 1) {
+    // Only 1 card left
+    scale = 1;
+    translateY = 0;
+  } else if (totalCards === 2) {
+    // Only 2 cards left
+    scale = positionFromTop === 0 ? 1 : 0.95;
+    translateY = positionFromTop === 0 ? 0 : -16;
+  } else {
+    // 3+ cards (normal)
+    scale = 1 - (positionFromTop * 0.05); // 1.00， 0.95， 0.90
+    translateY = -(positionFromTop * 35);
+  }
+  
+  // Set z-index so position 0 (front) is on top
+  const zIndex = 100 - positionFromTop;
+  
+  console.log(`Creating card for ${cat.id} at stack position ${positionFromTop} with scale ${scale} and translateY ${translateY} (${totalCards} cards remaining)`);
   card.style.transform = `translateY(${translateY}px) scale(${scale})`;
-
+  card.style.zIndex = String(zIndex);
+  
   card.innerHTML = `
     <img src="${cat.imageUrl}" alt="Cat photo" draggable="false" />
     <div class="card__overlay"></div>
@@ -134,13 +161,12 @@ function renderDeck() {
   clearDeck();
   setCounter();
 
-  // Render from bottom to top so the top card is last in DOM (on top)
+  // Render in forward order: position 0 (front), 1 (middle), 2 (back)
   const remaining = cats.slice(currentIndex);
-  const visible = remaining.slice(0, 3); // keep it light for mobile
+  const visible = remaining.slice(0, 3);
 
-  for (let i = visible.length - 1; i >= 0; i--) {
-    const stackPos = (visible.length - 1) - i; // bottom card gets more offset
-    const card = createCard(visible[i], stackPos);
+  for (let i = 0; i < visible.length; i++) {
+    const card = createCard(visible[i], i);
     deckEl.appendChild(card);
   }
 }
