@@ -11,6 +11,9 @@ type CatItem = {
   imageUrl: string;
 };
 
+const TARGET_TOTAL = 15;
+let isFetchingMore = false;
+
 const deckSectionEl = document.querySelector("section.deck") as HTMLElement;
 const deckEl = document.getElementById("deck") as HTMLDivElement;
 const counterEl = document.getElementById("counter") as HTMLDivElement;
@@ -29,6 +32,43 @@ const btnRestart = document.getElementById("btnRestart") as HTMLButtonElement;
 let cats: CatItem[] = [];
 let currentIndex = 0;
 let liked: CatItem[] = [];
+
+async function fetchMoreIfNeeded() {
+  if (isFetchingMore) return;
+  if (cats.length >= TARGET_TOTAL) return;
+
+  // when user is close to the end, fetch more
+  const remaining = cats.length - currentIndex;
+  if (remaining > 3) return;
+
+  isFetchingMore = true;
+  try {
+    const need = TARGET_TOTAL - cats.length;
+    const more = await fetchCats(Math.min(6, need), []); // fetch up to 6 each time
+
+    // avoid duplicates by id
+    const existing = new Set(cats.map((c) => c.id));
+    const filtered = more.filter((c) => !existing.has(c.id));
+
+    cats = cats.concat(filtered);
+
+    // preload a couple after appending
+    preloadUpcoming(currentIndex, 2);
+    setCounter();
+  } finally {
+    isFetchingMore = false;
+  }
+}
+
+function preloadImage(url: string): void {
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+}
+
+function preloadUpcoming(fromIndex: number, count: number): void {
+  cats.slice(fromIndex, fromIndex + count).forEach((c) => preloadImage(c.imageUrl));
+}
 
 function setCounter() {
   counterEl.textContent = `${Math.min(currentIndex + 1, cats.length)} / ${cats.length}`;
@@ -53,7 +93,7 @@ async function fetchCats(limit = 15, tags: string[] = []) {
     .filter((id): id is string => !!id && id.length > 0)
     .map((id) => ({
       id,
-      imageUrl: `https://cataas.com/cat/${encodeURIComponent(id)}`
+      imageUrl: `https://cataas.com/cat/${encodeURIComponent(id)}?width=500&height=700`
     }));
 
   return items;
@@ -91,7 +131,8 @@ function showSummary() {
   for (const cat of liked) {
     const div = document.createElement("div");
     div.className = "thumb";
-    div.innerHTML = `<img alt="Liked cat" loading="lazy" src="${cat.imageUrl}" />`;
+    const thumbUrl = `https://cataas.com/cat/${encodeURIComponent(cat.id)}?width=260&height=260`;
+    div.innerHTML = `<img alt="Liked cat" loading="lazy" decoding="async" src="${thumbUrl}" />`;
     likedGridEl.appendChild(div);
   }
 }
@@ -139,16 +180,23 @@ function createCard(cat: CatItem, positionFromTop: number) {
   // Set z-index so position 0 (front) is on top
   const zIndex = 100 - positionFromTop;
   
-  console.log(`Creating card for ${cat.id} at stack position ${positionFromTop} with scale ${scale} and translateY ${translateY} (${totalCards} cards remaining)`);
   card.style.transform = `translateY(${translateY}px) scale(${scale})`;
   card.style.zIndex = String(zIndex);
   
+  const loadingMode = positionFromTop === 0 ? "eager" : "lazy";
+
   card.innerHTML = `
-    <img src="${cat.imageUrl}" alt="Cat photo" draggable="false" />
+    <img loading="${loadingMode}" decoding="async" src="${cat.imageUrl}" alt="Cat photo" draggable="false" />
     <div class="card__overlay"></div>
     <div class="badge badge--like" data-badge-like>LIKE</div>
     <div class="badge badge--nope" data-badge-nope>NOPE</div>
   `;
+
+  const img = card.querySelector("img") as HTMLImageElement;
+  card.classList.add("is-loading");
+
+  img.addEventListener("load", () => card.classList.remove("is-loading"));
+  img.addEventListener("error", () => card.classList.remove("is-loading"));
 
   // only top card is interactive
   if (positionFromTop === 0) {
@@ -180,6 +228,8 @@ function goNext() {
     showSummary();
     return;
   }
+  fetchMoreIfNeeded();
+  preloadUpcoming(currentIndex, 2);
   renderDeck();
 }
 
@@ -304,9 +354,10 @@ async function start() {
 
   try {
     // Example tags: ["cute", "kitten"] (optional). Keep empty for variety.
-    cats = await fetchCats(15, ["cute"]); // or [] for random
+    cats = await fetchCats(6, []); // or [] for random
     if (cats.length === 0) throw new Error("No cats returned from API.");
 
+    preloadUpcoming(0, 3);
     renderDeck();
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
