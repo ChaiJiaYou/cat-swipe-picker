@@ -1,20 +1,31 @@
 import "./styles.scss";
 
 type CataasCat = {
-  id?: string;   // what your API returns
-  _id?: string;  // some versions may return this
+  id?: string;
+  _id?: string;
   tags?: string[];
+  mimetype?: string; // correct field from API
+  mime?: string;     // keep fallback (just in case)
 };
 
 type CatItem = {
   id: string;
   imageUrl: string;
+  mime?: string; // track the content type
 };
+
+type VoteHistoryItem = {
+  index: number;      // index BEFORE voting
+  cat: CatItem;
+  isLike: boolean;
+};
+
+let history: VoteHistoryItem[] = [];
 
 const TARGET_TOTAL = 15;
 let isFetchingMore = false;
 
-const deckSectionEl = document.querySelector("section.deck") as HTMLElement;
+const deckSectionEl = document.querySelector(".deck") as HTMLElement;
 const deckEl = document.getElementById("deck") as HTMLDivElement;
 const counterEl = document.getElementById("counter") as HTMLDivElement;
 const loadingEl = document.getElementById("loading") as HTMLDivElement;
@@ -23,6 +34,7 @@ const hintEl = document.getElementById("hint") as HTMLDivElement;
 
 const btnLike = document.getElementById("btnLike") as HTMLButtonElement;
 const btnDislike = document.getElementById("btnDislike") as HTMLButtonElement;
+const btnUndo = document.getElementById("btnUndo") as HTMLButtonElement;
 
 const summaryEl = document.getElementById("summary") as HTMLElement;
 const summaryTextEl = document.getElementById("summaryText") as HTMLParagraphElement;
@@ -39,12 +51,12 @@ async function fetchMoreIfNeeded() {
 
   // when user is close to the end, fetch more
   const remaining = cats.length - currentIndex;
-  if (remaining > 3) return;
+  if (remaining > 5) return;
 
   isFetchingMore = true;
   try {
     const need = TARGET_TOTAL - cats.length;
-    const more = await fetchCats(Math.min(6, need), []); // fetch up to 6 each time
+    const more = await fetchCats(Math.min(6, need), [], cats.length); // pass skip parameter
 
     // avoid duplicates by id
     const existing = new Set(cats.map((c) => c.id));
@@ -71,13 +83,13 @@ function preloadUpcoming(fromIndex: number, count: number): void {
 }
 
 function setCounter() {
-  counterEl.textContent = `${Math.min(currentIndex + 1, cats.length)} / ${cats.length}`;
-  if (cats.length === 0) counterEl.textContent = `0 / 0`;
+  counterEl.textContent = `${Math.min(currentIndex + 1, cats.length)} / ${TARGET_TOTAL}`;
+  if (cats.length === 0) counterEl.textContent = `0 / ${TARGET_TOTAL}`;
 }
 
-async function fetchCats(limit = 15, tags: string[] = []) {
+async function fetchCats(limit = 15, tags: string[] = [], skip = 0) {
   const params = new URLSearchParams();
-  params.set("skip", "0");
+  params.set("skip", String(skip));
   params.set("limit", String(limit));
   if (tags.length) params.set("tags", tags.join(","));
 
@@ -89,12 +101,22 @@ async function fetchCats(limit = 15, tags: string[] = []) {
   const data = (await res.json()) as CataasCat[];
 
   const items = data
-    .map((c) => c.id ?? c._id)                 // use id first
+    .map((c) => c.id ?? c._id)
     .filter((id): id is string => !!id && id.length > 0)
-    .map((id) => ({
-      id,
-      imageUrl: `https://cataas.com/cat/${encodeURIComponent(id)}?width=500&height=700`
-    }));
+    .map((id, index) => {
+      const mime = data[index].mimetype ?? data[index].mime ?? "image/jpeg";
+
+      const isVideo = mime.startsWith("video/");
+      const isGif = mime === "image/gif";
+
+      const imageUrl =
+        isVideo || isGif
+          ? `https://cataas.com/cat/${encodeURIComponent(id)}`
+          : `https://cataas.com/cat/${encodeURIComponent(id)}?width=400&height=400`;
+
+      return { id, imageUrl, mime };
+    });
+  console.log(items.map(x => ({ id: x.id, mime: x.mime, url: x.imageUrl })));
 
   return items;
 }
@@ -116,11 +138,11 @@ function hideError() {
 function showSummary() {
   // Hide the entire deck section (cards + buttons + hint)
   deckSectionEl.hidden = true;
-
+  document.body.classList.add("show-summary");
   // Show summary only
   summaryEl.hidden = false;
 
-  summaryTextEl.textContent = `You liked ${liked.length} out of ${cats.length} cats.`;
+  summaryTextEl.textContent = `You liked ${liked.length} out of ${TARGET_TOTAL} cats.`;
 
   likedGridEl.innerHTML = "";
   if (liked.length === 0) {
@@ -131,8 +153,20 @@ function showSummary() {
   for (const cat of liked) {
     const div = document.createElement("div");
     div.className = "thumb";
-    const thumbUrl = `https://cataas.com/cat/${encodeURIComponent(cat.id)}?width=260&height=260`;
-    div.innerHTML = `<img alt="Liked cat" loading="lazy" decoding="async" src="${thumbUrl}" />`;
+    
+    const isVideo = !!cat.mime && cat.mime.startsWith("video/");
+const isGif = cat.mime === "image/gif";
+
+const thumbUrl =
+  isVideo || isGif
+    ? `https://cataas.com/cat/${encodeURIComponent(cat.id)}`
+    : `https://cataas.com/cat/${encodeURIComponent(cat.id)}?width=500&height=700`;
+    
+    if (isVideo) {
+      div.innerHTML = `<video autoplay muted playsinline alt="Liked cat video" loading="lazy" style="width: 100%; height: 100%; object-fit: cover; display: block;" src="${thumbUrl}" />`;
+    } else {
+      div.innerHTML = `<img alt="Liked cat" loading="lazy" decoding="async" src="${thumbUrl}" />`;
+    }
     likedGridEl.appendChild(div);
   }
 }
@@ -140,7 +174,7 @@ function showSummary() {
 function resetUIForDeck() {
   // Show deck section again
   deckSectionEl.hidden = false;
-
+  document.body.classList.remove("show-summary");
   // Hide summary
   summaryEl.hidden = true;
 
@@ -155,54 +189,42 @@ function resetUIForDeck() {
 function createCard(cat: CatItem, positionFromTop: number) {
   const card = document.createElement("div");
   card.className = "card";
-  
-  // Calculate how many cards remain
-  const remaining = cats.slice(currentIndex);
-  const totalCards = remaining.length;
-  
-  let scale: number;
-  let translateY: number;
-  
-  if (totalCards === 1) {
-    // Only 1 card left
-    scale = 1;
-    translateY = 0;
-  } else if (totalCards === 2) {
-    // Only 2 cards left
-    scale = positionFromTop === 0 ? 1 : 0.95;
-    translateY = positionFromTop === 0 ? 0 : -16;
-  } else {
-    // 3+ cards (normal)
-    scale = 1 - (positionFromTop * 0.05); // 1.00， 0.95， 0.90
-    translateY = -(positionFromTop * 35);
-  }
-  
-  // Set z-index so position 0 (front) is on top
-  const zIndex = 100 - positionFromTop;
-  
+
+  // Always render a visible stack (downward + smaller)
+  const scaleStep = 0.05;     // smaller for each card behind
+  const offsetStep = 18;      // push down for each card behind
+  const opacityStep = 0.10;   // slight fade for depth
+
+  const scale = 1 - positionFromTop * scaleStep;          // 1, 0.95, 0.90
+  const translateY = positionFromTop * offsetStep;        // 0, 18, 36
+  const opacity = 1 - positionFromTop * opacityStep;      // 1, 0.9, 0.8
+
   card.style.transform = `translateY(${translateY}px) scale(${scale})`;
-  card.style.zIndex = String(zIndex);
-  
+  card.style.opacity = String(opacity);
+  card.style.zIndex = String(100 - positionFromTop);
+
   const loadingMode = positionFromTop === 0 ? "eager" : "lazy";
+  const isVideo = cat.mime && cat.mime.startsWith("video/");
 
-  card.innerHTML = `
-    <img loading="${loadingMode}" decoding="async" src="${cat.imageUrl}" alt="Cat photo" draggable="false" />
-    <div class="card__overlay"></div>
-    <div class="badge badge--like" data-badge-like>LIKE</div>
-    <div class="badge badge--nope" data-badge-nope>NOPE</div>
-  `;
-
-  const img = card.querySelector("img") as HTMLImageElement;
-  card.classList.add("is-loading");
-
-  img.addEventListener("load", () => card.classList.remove("is-loading"));
-  img.addEventListener("error", () => card.classList.remove("is-loading"));
-
-  // only top card is interactive
-  if (positionFromTop === 0) {
-    attachSwipeHandlers(card, cat);
+  if (isVideo) {
+    card.innerHTML = `
+      <video autoplay muted playsinline src="${cat.imageUrl}" style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      <div class="card__tint"></div>
+      <div class="card__overlay"></div>
+      <div class="badge badge--like" data-badge-like>LIKE</div>
+      <div class="badge badge--nope" data-badge-nope>NOPE</div>
+    `;
+  } else {
+    card.innerHTML = `
+      <img loading="${loadingMode}" decoding="async" src="${cat.imageUrl}" alt="Cat photo" draggable="false" />
+      <div class="card__tint"></div>
+      <div class="card__overlay"></div>
+      <div class="badge badge--like" data-badge-like>LIKE</div>
+      <div class="badge badge--nope" data-badge-nope>NOPE</div>
+    `;
   }
 
+  if (positionFromTop === 0) attachSwipeHandlers(card, cat);
   return card;
 }
 
@@ -222,9 +244,9 @@ function renderDeck() {
 
 function goNext() {
   currentIndex++;
-  if (currentIndex >= cats.length) {
+  if (currentIndex >= TARGET_TOTAL || currentIndex >= cats.length) {
     setCounter();
-    counterEl.textContent = `${cats.length} / ${cats.length}`;
+    counterEl.textContent = `${TARGET_TOTAL} / ${TARGET_TOTAL}`;
     showSummary();
     return;
   }
@@ -234,15 +256,54 @@ function goNext() {
 }
 
 function vote(cat: CatItem, isLike: boolean) {
+  // record state before moving forward
+  history.push({ index: currentIndex, cat, isLike });
+  updateUndoState();
+
   if (isLike) liked.push(cat);
   goNext();
+}
+
+function updateUndoState() {
+  btnUndo.disabled = history.length === 0;
+}
+
+function undoLast() {
+  const last = history.pop();
+  updateUndoState();
+  if (!last) return;
+
+  // If summary is showing, return to deck view
+  if (!summaryEl.hidden) {
+    summaryEl.hidden = true;
+    deckSectionEl.hidden = false;
+    document.body.classList.remove("show-summary");
+  }
+
+  // restore index to the card we just voted on
+  currentIndex = last.index;
+
+  // If it was a like, remove the last liked match
+  if (last.isLike) {
+    for (let i = liked.length - 1; i >= 0; i--) {
+      if (liked[i].id === last.cat.id) {
+        liked.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  // Make sure counter + deck reflect the restored state
+  setCounter();
+  preloadUpcoming(currentIndex, 2);
+  renderDeck();
 }
 
 function animateAndVote(card: HTMLElement, cat: CatItem, isLike: boolean) {
   const x = isLike ? window.innerWidth : -window.innerWidth;
   const rot = isLike ? 18 : -18;
   card.style.transition = "transform 220ms ease";
-  card.style.transform = `translate(${x}px, -20px) rotate(${rot}deg)`;
+  card.style.transform = `translate(${x}px, -20px) rotate(${rot}deg) scale(1)`
   window.setTimeout(() => vote(cat, isLike), 200);
 }
 
@@ -253,6 +314,7 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
   let currentY = 0;
   let dragging = false;
 
+  const tintEl = card.querySelector(".card__tint") as HTMLDivElement;
   const likeBadge = card.querySelector("[data-badge-like]") as HTMLDivElement;
   const nopeBadge = card.querySelector("[data-badge-nope]") as HTMLDivElement;
 
@@ -274,15 +336,33 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
     currentY = e.clientY - startY;
 
     const rotate = Math.max(-18, Math.min(18, currentX / 18));
-    card.style.transform = `translate(${currentX}px, ${currentY}px) rotate(${rotate}deg)`;
 
-    const strength = Math.min(1, Math.abs(currentX) / 90);
+    // 0..1 based on swipe distance
+    const strength = Math.min(1, Math.abs(currentX) / 140);
+
+    // scale effect (1.00 -> 1.03)
+    const scale = 1 + strength * 0.03;
+
+    card.style.transform = `translate(${currentX}px, ${currentY}px) rotate(${rotate}deg) scale(${scale})`;
+
+    // badge opacity
     if (currentX > 0) {
       likeBadge.style.opacity = String(strength);
       nopeBadge.style.opacity = "0";
     } else {
       nopeBadge.style.opacity = String(strength);
       likeBadge.style.opacity = "0";
+    }
+
+    // tint alpha (0..0.35)
+    const alpha = 0.35 * strength;
+
+    if (currentX > 0) {
+      tintEl.style.setProperty("--likeAlpha", String(alpha));
+      tintEl.style.setProperty("--nopeAlpha", "0");
+    } else {
+      tintEl.style.setProperty("--nopeAlpha", String(alpha));
+      tintEl.style.setProperty("--likeAlpha", "0");
     }
   };
 
@@ -291,6 +371,8 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
     dragging = false;
 
     const threshold = 110; // swipe threshold in px
+    tintEl.style.setProperty("--likeAlpha", "0");
+    tintEl.style.setProperty("--nopeAlpha", "0");
     const likedIt = currentX > threshold;
     const dislikedIt = currentX < -threshold;
 
@@ -305,7 +387,7 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
 
     // snap back
     card.style.transition = "transform 200ms ease";
-    card.style.transform = `translate(0px, 0px) rotate(0deg)`;
+    card.style.transform = `translate(0px, 0px) rotate(0deg) scale(1)`;
   };
 
   card.addEventListener("pointerdown", onPointerDown);
@@ -338,6 +420,10 @@ function bindButtons() {
   btnRestart.addEventListener("click", () => {
     start();
   });
+
+  btnUndo.addEventListener("click", () => {
+    undoLast();
+  });
 }
 
 async function start() {
@@ -348,7 +434,9 @@ async function start() {
 
   cats = [];
   liked = [];
+  history = [];
   currentIndex = 0;
+  updateUndoState();
   setCounter();
   clearDeck();
 
