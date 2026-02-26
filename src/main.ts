@@ -21,6 +21,8 @@ type VoteHistoryItem = {
 };
 
 let history: VoteHistoryItem[] = [];
+let isAnimating = false;
+let lastVotedIndex: number | null = null;
 
 const TARGET_TOTAL = 15;
 let isFetchingMore = false;
@@ -78,6 +80,15 @@ function preloadImage(url: string): void {
   img.src = url;
 }
 
+function setActionsEnabled(enabled: boolean) {
+  btnLike.disabled = !enabled;
+  btnDislike.disabled = !enabled;
+  btnUndo.disabled = !enabled && history.length === 0 ? true : !enabled;
+  // better: keep undo enabled only when not animating
+  if (!enabled) btnUndo.disabled = true;
+  else updateUndoState();
+}
+
 function preloadUpcoming(fromIndex: number, count: number): void {
   cats.slice(fromIndex, fromIndex + count).forEach((c) => preloadImage(c.imageUrl));
 }
@@ -107,7 +118,7 @@ async function fetchCats(limit = 15, tags: string[] = [], skip = 0) {
       const mime = data[index].mimetype ?? data[index].mime ?? "image/jpeg";
 
       const isVideo = mime.startsWith("video/");
-      const isGif = mime === "image/gif";
+      const isGif = mime.startsWith("image/gif") || mime.includes("gif");
 
       const imageUrl =
         isVideo || isGif
@@ -256,12 +267,18 @@ function goNext() {
 }
 
 function vote(cat: CatItem, isLike: boolean) {
-  // record state before moving forward
+  // Prevent double vote on the same index (fast clicks)
+  if (lastVotedIndex === currentIndex) return;
+  lastVotedIndex = currentIndex;
+
   history.push({ index: currentIndex, cat, isLike });
   updateUndoState();
 
   if (isLike) liked.push(cat);
   goNext();
+
+  // allow next card to be voted
+  lastVotedIndex = null;
 }
 
 function updateUndoState() {
@@ -300,11 +317,25 @@ function undoLast() {
 }
 
 function animateAndVote(card: HTMLElement, cat: CatItem, isLike: boolean) {
+  if (isAnimating) return;
+  isAnimating = true;
+  setActionsEnabled(false);
+
+  // mark card as already voted so it can't be voted again
+  if ((card as any).dataset.voted === "1") return;
+  (card as any).dataset.voted = "1";
+
   const x = isLike ? window.innerWidth : -window.innerWidth;
   const rot = isLike ? 18 : -18;
+
   card.style.transition = "transform 220ms ease";
-  card.style.transform = `translate(${x}px, -20px) rotate(${rot}deg) scale(1)`
-  window.setTimeout(() => vote(cat, isLike), 200);
+  card.style.transform = `translate(${x}px, -20px) rotate(${rot}deg) scale(1)`;
+
+  window.setTimeout(() => {
+    vote(cat, isLike);
+    isAnimating = false;
+    setActionsEnabled(true);
+  }, 220);
 }
 
 function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
@@ -313,6 +344,8 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
   let currentX = 0;
   let currentY = 0;
   let dragging = false;
+
+  
 
   const tintEl = card.querySelector(".card__tint") as HTMLDivElement;
   const likeBadge = card.querySelector("[data-badge-like]") as HTMLDivElement;
@@ -366,26 +399,25 @@ function attachSwipeHandlers(card: HTMLDivElement, cat: CatItem) {
     }
   };
 
+  
+  let hasVoted = false;
+
   const onPointerUp = () => {
     if (!dragging) return;
     dragging = false;
 
-    const threshold = 110; // swipe threshold in px
-    tintEl.style.setProperty("--likeAlpha", "0");
-    tintEl.style.setProperty("--nopeAlpha", "0");
+    if (hasVoted || isAnimating) return; // block double triggers
+
+    const threshold = 110;
     const likedIt = currentX > threshold;
     const dislikedIt = currentX < -threshold;
 
-    likeBadge.style.opacity = "0";
-    nopeBadge.style.opacity = "0";
-
     if (likedIt || dislikedIt) {
-      const isLike = likedIt;
-      animateAndVote(card, cat, isLike);
+      hasVoted = true;
+      animateAndVote(card, cat, likedIt);
       return;
     }
 
-    // snap back
     card.style.transition = "transform 200ms ease";
     card.style.transform = `translate(0px, 0px) rotate(0deg) scale(1)`;
   };
@@ -400,31 +432,13 @@ function getTopCat(): CatItem | null {
   return cats[currentIndex] ?? null;
 }
 
-function bindButtons() {
-  btnLike.addEventListener("click", () => {
-    const cat = getTopCat();
-    if (!cat) return;
-    const topCard = deckEl.querySelector(".card") as HTMLElement | null;
-    if (topCard) animateAndVote(topCard, cat, true);
-    else vote(cat, true);
-  });
-
-  btnDislike.addEventListener("click", () => {
-    const cat = getTopCat();
-    if (!cat) return;
-    const topCard = deckEl.querySelector(".card") as HTMLElement | null;
-    if (topCard) animateAndVote(topCard, cat, false);
-    else vote(cat, false);
-  });
-
-  btnRestart.addEventListener("click", () => {
-    start();
-  });
-
-  btnUndo.addEventListener("click", () => {
-    undoLast();
-  });
+// ADD THIS
+function getTopCardEl(): HTMLElement | null {
+  // Because renderDeck appends cards in order (0,1,2),
+  // the TOP card is the FIRST ".card" in the deck.
+  return deckEl.querySelector(".card") as HTMLElement | null;
 }
+
 
 async function start() {
   hideError();
@@ -453,6 +467,41 @@ async function start() {
   } finally {
     loadingEl.setAttribute("hidden", "true");
   }
+}
+
+function bindButtons() {
+  btnLike.addEventListener("click", () => {
+    if (isAnimating) return;
+
+    const cat = getTopCat();
+    if (!cat) return;
+
+    const topCard = getTopCardEl();
+    if (!topCard) return;
+
+    animateAndVote(topCard, cat, true);
+  });
+
+  btnDislike.addEventListener("click", () => {
+    if (isAnimating) return;
+
+    const cat = getTopCat();
+    if (!cat) return;
+
+    const topCard = getTopCardEl();
+    if (!topCard) return;
+
+    animateAndVote(topCard, cat, false);
+  });
+
+  btnUndo.addEventListener("click", () => {
+    if (isAnimating) return;
+    undoLast();
+  });
+
+  btnRestart.addEventListener("click", () => {
+    start();
+  });
 }
 
 bindButtons();
